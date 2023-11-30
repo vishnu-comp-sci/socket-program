@@ -1,0 +1,123 @@
+#include <iostream>
+#include <vector>
+#include <cstring>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#endif
+
+constexpr int PORT = 12345;
+constexpr int MAX_CLIENTS = 10;
+constexpr int BUFFER_SIZE = 1024;
+
+int main() {
+#ifdef _WIN32
+    // Windows socket initialization
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "Failed to initialize winsock" << std::endl;
+        return -1;
+    }
+#endif
+
+    // Create socket
+    int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverSocket == -1) {
+        std::cerr << "Error creating socket" << std::endl;
+        return -1;
+    }
+
+    // Bind socket
+    sockaddr_in serverAddr{};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    serverAddr.sin_port = htons(PORT);
+
+    if (bind(serverSocket, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)) == -1) {
+        std::cerr << "Error binding socket" << std::endl;
+        return -1;
+    }
+
+    // Listen for incoming connections
+    if (listen(serverSocket, MAX_CLIENTS) == -1) {
+        std::cerr << "Error listening for connections" << std::endl;
+        return -1;
+    }
+
+    std::cout << "Server listening on port " << PORT << std::endl;
+
+    // Set of socket descriptors
+    fd_set readfds;
+    std::vector<int> clientSockets;
+
+    while (true) {
+        FD_ZERO(&readfds);
+        FD_SET(serverSocket, &readfds);
+
+        int maxSocket = serverSocket;
+
+        // Add child sockets to set
+        for (const auto& clientSocket : clientSockets) {
+            FD_SET(clientSocket, &readfds);
+            if (clientSocket > maxSocket) {
+                maxSocket = clientSocket;
+            }
+        }
+
+        // Wait for an activity on any of the sockets
+        if (select(maxSocket + 1, &readfds, nullptr, nullptr, nullptr) == -1) {
+            std::cerr << "Error in select" << std::endl;
+            return -1;
+        }
+
+        // If something happened on the server socket, then it's an incoming connection
+        if (FD_ISSET(serverSocket, &readfds)) {
+            sockaddr_in clientAddr{};
+            socklen_t addrLen = sizeof(clientAddr);
+            int newSocket = accept(serverSocket, reinterpret_cast<sockaddr*>(&clientAddr), &addrLen);
+
+            if (newSocket == -1) {
+                std::cerr << "Error accepting connection" << std::endl;
+                continue;
+            }
+
+            std::cout << "New connection from " << inet_ntoa(clientAddr.sin_addr) << ":" << ntohs(clientAddr.sin_port) << std::endl;
+
+            clientSockets.push_back(newSocket);
+        }
+
+        // Check for data from clients
+        for (auto it = clientSockets.begin(); it != clientSockets.end(); ++it) {
+            int clientSocket = *it;
+
+            if (FD_ISSET(clientSocket, &readfds)) {
+                char buffer[BUFFER_SIZE];
+                memset(buffer, 0, sizeof(buffer));
+
+                int bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
+                if (bytesRead <= 0) {
+                    // Connection closed or error
+                    std::cout << "Client disconnected" << std::endl;
+                    close(clientSocket);
+                    it = clientSockets.erase(it);
+                } else {
+                    // Echo back the received data
+                    send(clientSocket, buffer, bytesRead, 0);
+                }
+            }
+        }
+    }
+
+    // Cleanup
+#ifdef _WIN32
+    WSACleanup();
+#endif
+
+    return 0;
+}
