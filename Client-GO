@@ -1,0 +1,46 @@
+package main
+
+import (
+	"fmt"
+	"net"
+	"os"
+	"time"
+)
+
+const serverAddr = "127.0.0.1:12345"
+
+func main() {
+	for i := 0; i < 5; i++ {
+		go sendRequest(i)
+	}
+
+	// Keep the program running
+	select {}
+}
+
+func sendRequest(requestNumber int) {
+	conn, err := net.Dial("tcp", serverAddr)
+	if err != nil {
+		fmt.Println("Error connecting to server:", err)
+		os.Exit(1)
+	}
+	defer conn.Close()
+
+	message := fmt.Sprintf("Request %d from client", requestNumber)
+	_, err = conn.Write([]byte(message))
+	if err != nil {
+		fmt.Println("Error sending data to server:", err)
+		return
+	}
+
+	fmt.Printf("Sent: %s\n", message)
+
+	buffer := make([]byte, 1024)
+	_, err = conn.Read(buffer)
+	if err != nil {
+		fmt.Println("Error receiving data from server:", err)
+		return
+	}
+
+	fmt.Printf("Received: %s\n", buffer)
+}
